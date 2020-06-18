@@ -120,22 +120,21 @@ class MyStanModel(StanModel):
   """
   _path = Path(__file__).parent
   _keypath = _path / '.stankey'
-  _hashkey = None
 
-  # Utility to ensure private class attribute _hashkey is set.
+  # Utility to ensure _hashkey is set.
   # mt parameter is not currently used:  same secret key for all models.
   @classmethod
   def _setkey(cls,mt):
-    if cls._hashkey is None:
-      if cls._keypath.is_file():
-        with open(cls._keypath,'rb') as f: cls._hashkey = f.read()
-      else:
-        cls._hashkey = secrets.token_bytes(nbytes=1024)
-        with open(cls._keypath,'wb') as f: f.write(cls._hashkey)
-        cls._keypath.chmod(0o400)
+    if cls._keypath.is_file():
+      with open(cls._keypath,'rb') as f: _hashkey = f.read()
+    else:
+      _hashkey = secrets.token_bytes(nbytes=1024)
+      with open(cls._keypath,'wb') as f: f.write(_hashkey)
+      cls._keypath.chmod(0o400)
+    return _hashkey
 
   @classmethod
-  def load(cls,mt,mash):
+  def load(cls,mt):
     """
     Load previously saved compiled model and check hash.
 
@@ -143,8 +142,6 @@ class MyStanModel(StanModel):
     ----------
     mt : str
       The model type (identifying the model code).
-    mash : str
-      Hex representation of expected digest / hash.
 
     Returns
     -------
@@ -156,20 +153,24 @@ class MyStanModel(StanModel):
 
     Examples
     --------
-    >>> m = MyStanModel.load("m",model_dict['python'])
+    >>> m = MyStanModel.load("m")
     """
     # Set up 
-    cls._setkey(mt)
+    _hashkey = cls._setkey(mt)
     m = None
     # Load model from file
     modpath = cls._path / (".stan-" + mt)
     try:
-      with open(modpath, 'rb') as f: ms = f.read()
-    except:
+      with open(modpath, 'rb') as f:
+        mashlen = int(bytes.hex(f.read(8)),16)
+        mash = f.read(mashlen)
+        ms = f.read()
+    except: # Exception as e:
+      #print("Exception: "+str(e))
       pass
     else:
-      h = hmac.new(cls._hashkey,msg=ms,digestmod=hashlib.sha256)
-      if hmac.compare_digest(h.hexdigest(),mash):
+      h = hmac.new(_hashkey,msg=ms,digestmod=hashlib.sha256)
+      if hmac.compare_digest(bytes(h.hexdigest(),'utf_8'),mash):
         m = pickle.loads(ms) #,protocol=pickle.HIGHEST_PROTOCOL)
     return m
 
@@ -189,7 +190,7 @@ class MyStanModel(StanModel):
 
     Returns
     -------
-    dict of 'python' set to the hex representation of the hash.
+    No return value.
 
     See Also
     --------
@@ -198,14 +199,17 @@ class MyStanModel(StanModel):
     Examples
     --------
     >>> m = MyStanModel(model_code=mt_str)
-    >>> model_dict = m.save("m")
+    >>> m.save("m")
     """
-    MyStanModel._setkey(mt)
+    _hashkey = MyStanModel._setkey(mt)
     ms = pickle.dumps(self,protocol=pickle.HIGHEST_PROTOCOL)
-    h = hmac.new(self._hashkey,msg=ms,digestmod=hashlib.sha256)
+    h = hmac.new(_hashkey,msg=ms,digestmod=hashlib.sha256)
     modpath = self._path / (".stan-" + mt)
-    with open(modpath, 'wb') as f: f.write(ms)
-    return dict(python=h.hexdigest())
+    with open(modpath, 'wb') as f:
+      hd = bytes(h.hexdigest(),'utf_8')
+      f.write(bytes.fromhex("{0:016x}".format(len(hd))))  # i8 is ample
+      f.write(hd)
+      f.write(ms)
 
 #............................................................................
 
@@ -253,7 +257,7 @@ class JsonEnc(json.JSONEncoder):
     try:
       if isinstance(obj, np.generic): return obj.item()
       if isinstance(obj, np.ndarray): obj = pd.Series(obj) # pass to next case
-    except Exception as e:
+    except: # Exception as e:
       #print("Exception raised: " + str(e))
       pass
     # Is it a pd.DataFrame or pd.Series
@@ -518,8 +522,6 @@ class ModelList(dict):
   |Index  |<model |table  |dataframe of models and their statuses      |
   +       + type> +-------+--------------------------------------------+
   |       |       |pres   |list of columns in table to present         |
-  +       +       +-------+--------------------------------------------+
-  |       |       |model  |previously compiled model: dict(python=hash)|
   +-------+-------+-------+--------------------------------------------+
   |<model |Fit    |Code   |str, Stan code                              |
   + name> +       +-------+--------------------------------------------+
@@ -586,7 +588,7 @@ class ModelList(dict):
           #print(k2)
           #print(v2)
           obj[k1][k2][Table] = jsplus(v2[Table])
-          # Model and pres are native structures
+          # pres is a native structure
       else:
         if Fit not in v1: obj[k1][Fit] = dict(Post=None,Code=None,Summary=None)
         obj[k1][Fit][Post] = jsplus(v1[Fit][Post])
@@ -659,7 +661,7 @@ class ModelList(dict):
       err = None
       try:
         obj = jsdump(self,s)
-      except Exception as e:
+      except: # Exception as e:
         #print("ModelList to_json exception: " + str(e))
         err = e
       if err is not None:
@@ -2078,7 +2080,6 @@ Code = 'Code'
 Data = 'Data'    # Also used by argparse processing
 Fit = 'Fit'
 Index = 'Index'
-Model = 'model'
 Post = 'Post'
 Pres = 'pres'
 Summary = 'Summary'
@@ -2254,7 +2255,7 @@ if __name__ == "__main__":
     refresh = True
     try:
       with gzip.open(ecdc) as ed: df,lastRefresh,dmc = jsload(ed)
-    except Exception as e:
+    except: # Exception as e:
       #print("ECDC exception: " + str(e))
       pass
     # Limit access to website
@@ -2567,7 +2568,7 @@ if __name__ == "__main__":
     # Present the list of models of this type to be processed
     print(dm.loc[:,pres])
     # Save the updated model specifications in the index
-    if mt not in mml[Index]: mml[Index][mt] = dict(model=dict())
+    if mt not in mml[Index]: mml[Index][mt] = dict()
     mml[Index][mt][Table] = dm
     mml[Index][mt][Pres] = pres
     dmd[mt] = dm
@@ -2798,15 +2799,12 @@ if __name__ == "__main__":
         mm_pars = mp.loc[["I","S","C","G"]].to_dict()
   
         # Check if a recently compiled model is available (save MCMC time)
-        m = None
-        if mt in mml[Index] and Model in mml[Index][mt] and \
-          'python' in mml[Index][mt][Model]:
-          m = MyStanModel.load(mt,mml[Index][mt][Model]['python'])
+        m = MyStanModel.load(mt)
         # Check this compiled version is up to date
         if m is not None and m.model_code != ModelCode[mt]: m = None
         if m is None:  # Code change or just never compiled
           m = MyStanModel(model_code=ModelCode[mt])
-          mml[Index][mt][Model] = m.save(mt)  # avoid future recompilation
+          m.save(mt)  # avoid future recompilation
         # Use the model to fit the data
         fit = m.sampling(data={**mm_data,**mm_pars,**mm_fixed},
                          **mm_args,init=mm_start,
@@ -2964,20 +2962,6 @@ if __name__ == "__main__":
   print("done")
   
   rest="""
-  # In stan call:
-  n_jobs=max(cpu_count()-1,1)
-  
-  # For multithreading (multiprocessing) support:
-  extra_compile_args = ['-pthread', '-DSTAN_THREADS']
-  # And obviously use:  extra_compile_args=extra_compile_args
-  n_jobs=-1  # May change to chains
-  
-  
-  
-  # Can also save fit samples as csv:
-  df = pystan.misc.to_dataframe(fit)
-  df.to_csv("path/to/fit.csv", index=False)
-  
   To integrate logging:
   
   # Set up pystan logging before importing pystan
@@ -2997,6 +2981,4 @@ if __name__ == "__main__":
   logger.addHandler(fh)
   
   import pystan
-  
-  
   """

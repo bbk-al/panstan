@@ -1,0 +1,28 @@
+
+# Ignore extensions..
+*.aux
+*.bbl
+*.blg
+*.egg-info
+*.lob
+*.lof
+*.log
+*.lot
+*.out
+*.odt#
+*.pdf
+*.swp
+*.synctex.gz
+*.toc
+
+# Ignore directories
+.DS_Store
+Old
+Papers
+data
+build
+dist
+__pycache__
+Doc/_*
+.stankey
+.stan-*
