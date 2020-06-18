@@ -1,0 +1,21 @@
+include pyproject.toml
+
+# Include the README and Commentary
+include *.rst
+
+# Include the licence file
+include LICENCE
+
+# Include py and stan code
+include panstan.py __init__.py *.stan
+
+# Include the Doc files
+recursive-include Doc/_build/html *
+
+# Exclude old and other sub-dirs, just to be sure
+#prune old
+#prune __pycache__
+prune Doc/panstan
+prune Doc/_[st]*
+#exclude .stan*
+#exclude Doc/conf.py Doc/index.rst Doc/Makefile
